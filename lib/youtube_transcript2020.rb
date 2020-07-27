@@ -155,9 +155,8 @@ EOF
 
     # formats the paragraph with the timestamp appearing above
     @a = a2
-    a2.map {|time, s| "\n%s\n\n%s" % [time, s]}
+    a2.map {|time, s| "\n%s\n\n%s" % [time, s]}.join("\n")
 
   end
 
 end
-
