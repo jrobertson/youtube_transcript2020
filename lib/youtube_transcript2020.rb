@@ -2,6 +2,7 @@
 
 # file: youtube_transcript2020.rb
 
+require 'yawc'
 require 'subunit'
 require 'simple-config'
 
@@ -39,6 +40,10 @@ class YoutubeTranscript2020
 
     h = {id: @id, title: @title, author: @author}
     SimpleConfig.new(h).to_s + "\n#{'-'*78}\n\n" + @s
+  end
+  
+  def to_text()
+    @a.map(&:last).join("\n")
   end
 
   # reads a plain text transcript which has been modified to include headings
@@ -82,7 +87,7 @@ class YoutubeTranscript2020
   <body>
 <div style="width: 1080px; background: white">
 <div style="float:left; width: 580px; background: white">
-<iframe width="560" height="315" src="#{url}?start=67&autoplay=1" name="video" frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+<iframe width="560" height="315" src="#{url}&autoplay=1" name="video" frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
 <h1>#{@title}</h1>
 </div>
 <div style="float:right; width: 500px; overflow-y: scroll; height: 400px">
@@ -102,6 +107,14 @@ EOF
     
     @to_a.select {|timestamp, _| timestamp =~ / /}.map(&:first)    
 
+  end
+
+  # returns a Hash object containing the frequenecy of each word
+  # level: 2 (ignores commond words including stop words)
+  # level: 3 (ignores dictionary words)
+  #
+  def to_keywords(level: 2)
+    Yawc.new(self.to_text(), level: level).to_h
   end
 
   private
