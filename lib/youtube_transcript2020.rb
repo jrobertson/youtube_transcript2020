@@ -4,6 +4,7 @@
 
 require 'yawc'
 require 'subunit'
+require 'youtube_id'
 require 'simple-config'
 
 
@@ -11,20 +12,20 @@ class YoutubeTranscript2020
 
   attr_reader :to_a, :author, :id, :title
 
-  def initialize(id=nil)
+  def initialize(id=nil, debug: false)  
 
     return unless id
+    
+    @debug = debug
 
-    @id = if id[/https:\/\/www\.youtube\.com\/watch\?v=/] then
-      id[/(?<=^https:\/\/www\.youtube\.com\/watch\?v=).*/]
-    elsif id[/https:\/\/youtu\.be\//]
-      id[/(?<=^https:\/\/youtu\.be\/).*/]
+    @id = if id[/https?:\/\//] then
+      YoutubeID.from(id)
     else
       id
     end
 
     s = Net::HTTP.get(URI("http://video.google.com/timedtext?lang=en&v=#{@id}"))
-    @s = parse s
+    @s = parse(s) unless s.empty?
 
     fetch_info(@id)
 
@@ -52,14 +53,22 @@ class YoutubeTranscript2020
 
     s = RXFHelper.read(obj).first
 
-    header, body = s.split(/-----+/,2)
+    if s =~ /------+/ then
+      header, body = s.split(/-----+/,2)
 
-    h = SimpleConfig.new(header).to_h
-    @id, @author, @title = h[:id], h[:author], h[:title]
-    @s = body
-    
+      h = SimpleConfig.new(header).to_h
+      @id, @author, @title = h[:id], h[:author], h[:title]
+      @s = body
+    else
+      body = obj
+      raw_transcript = true
+    end
+
+    puts 'body: ' + body[0..400] if @debug
     a = body.lines.map(&:chomp).partition {|x| x =~ /\d+:\d+/ }    
-    @a = a[0].zip(a[1])    
+    @a = a[0].zip(a[1])
+
+    @s = join_sentences(@a) if raw_transcript
 
   end
 
@@ -87,7 +96,7 @@ class YoutubeTranscript2020
   <body>
 <div style="width: 1080px; background: white">
 <div style="float:left; width: 580px; background: white">
-<iframe width="560" height="315" src="#{url}&autoplay=1" name="video" frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+#{@html_embed}
 <h1>#{@title}</h1>
 </div>
 <div style="float:right; width: 500px; overflow-y: scroll; height: 400px">
@@ -121,12 +130,78 @@ EOF
 
   def fetch_info(id)
     
-    url = "http://www.youtube.com/oembed?url=http://www.youtube.com/watch?v=#{id}&format=json"    
+    url = "http://www.youtube.com/oembed?url=http://www.youtube.com/watch?v=#{id}&format=xml"
     s = Net::HTTP.get(URI(url))
     
-    h = JSON.parse(s, symbolize_names: true)
-    @title = h[:title]
-    @author = h[:author_name]
+    e = Rexle.new(s).root
+    
+    @title = e.text('title')
+    @author = e.text('author_name')
+    @html_embed = e.text('html').unescape
+    
+  end
+  
+  def join_sentences(a)
+    
+    if @debug then
+      puts 'inside join_sentence'
+      puts 'a: ' + a.take(3).inspect
+    end
+    
+    a2 = []
+
+    # the following cleans up sentences that start with And, Or, But, So etc.
+
+    a.each do |time, raws|
+
+      puts 'raws: ' + raws.inspect if @debug
+      
+      s = raws.sub(/^\W+/,'')
+      
+      if s[/^[a-z|0-9]|I\b|I'/]then
+        
+        if a2.any? then
+          
+          # only join two parts together if there was no full stop in 
+          # the previous line
+          
+          if a2[-1][-1] != /\.$/ then
+            a2[-1][-1] = a2[-1][-1].chomp + ' ' + s            
+          else
+            a2 << [time, s]
+          end
+          
+        else          
+          a2 << [time, s.capitalize]
+        end
+        
+      elsif s[/^And,? /]
+        a2[-1][-1] += ' ' + s.sub(/^And,? /,'').capitalize
+      elsif  s[/^Or,? /]
+        a2[-1][-1] = a2[-1][-1].chomp + ' ' + s
+      elsif  s[/^But /]
+        a2[-1][-1] += ' ' + s.sub(/But,? /,'').capitalize
+      elsif s[/^"/]
+        a2[-1][-1] = a2[-1][-1].chomp + ' ' + s
+      elsif s[/^So,? /]
+        a2[-1][-1] += ' ' + s.sub(/^So,? /,'').capitalize
+      elsif s[/^\[Music|Applause\]/i]
+        # ignore it
+      else
+        
+        if a2.any? and not a2[-1][-1] =~ /\.\s*$/ then
+            a2[-1][-1] = a2[-1][-1].chomp + ' ' + s            
+        else
+            a2 << [time, s]
+        end
+        
+      end
+
+    end
+
+    # formats the paragraph with the timestamp appearing above
+    @a = a2
+    a2.map {|time, s| "\n%s\n\n%s" % [time, s]}.join("\n")    
     
   end
 
@@ -142,33 +217,7 @@ EOF
 
     @to_a = a
 
-    a2 = []
-
-    # the following cleans up sentences that start with And, Or, But, So etc.
-
-    a.each do |time, s|
-
-      if s[/^[a-z|0-9]/]then
-        a2[-1][-1] = a2[-1][-1].chomp + ' ' + s
-      elsif s[/^And,? /]
-        a2[-1][-1] += ' ' + s.sub(/^And,? /,'').capitalize
-      elsif  s[/^Or,? /]
-        a2[-1][-1] = a2[-1][-1].chomp + ' ' + s
-      elsif  s[/^But /]
-        a2[-1][-1] += ' ' + s.sub(/But,? /,'').capitalize
-      elsif s[/^"/]
-        a2[-1][-1] = a2[-1][-1].chomp + ' ' + s
-      elsif s[/^So,? /]
-        a2[-1][-1] += ' ' + s.sub(/^So,? /,'').capitalize
-      else
-        a2 << [time, s]
-      end
-
-    end
-
-    # formats the paragraph with the timestamp appearing above
-    @a = a2
-    a2.map {|time, s| "\n%s\n\n%s" % [time, s]}.join("\n")
+    join_sentences(a)
 
   end
 
