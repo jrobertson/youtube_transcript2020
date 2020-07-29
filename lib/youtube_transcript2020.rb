@@ -18,11 +18,7 @@ class YoutubeTranscript2020
     
     @debug = debug
 
-    @id = if id[/https?:\/\//] then
-      YoutubeID.from(id)
-    else
-      id
-    end
+    @id = id[/https?:\/\//] ? YoutubeID.from(id) : id
 
     s = Net::HTTP.get(URI("http://video.google.com/timedtext?lang=en&v=#{@id}"))
     @s = parse(s) unless s.empty?
@@ -85,6 +81,14 @@ class YoutubeTranscript2020
       "<li><a href='%s?start=%s&autoplay=1' target='video'>%s</a><p>%s</p></li> " \
           % [url, seconds, timestamp, s]
     end
+    
+    puts '@html_embed: ' + @html_embed.inspect if @debug
+    doc = Rexle.new(@html_embed.to_s)
+    puts 'before attributes'
+    doc.root.attributes[:name] = 'video'
+    embed = doc.xml(declaration: false)
+    puts 'embed: ' + embed.inspect if @debug
+    #embed = @html_embed
 
 <<EOF
 <!DOCTYPE html>
@@ -96,7 +100,7 @@ class YoutubeTranscript2020
   <body>
 <div style="width: 1080px; background: white">
 <div style="float:left; width: 580px; background: white">
-#{@html_embed}
+#{embed}
 <h1>#{@title}</h1>
 </div>
 <div style="float:right; width: 500px; overflow-y: scroll; height: 400px">
@@ -138,7 +142,8 @@ EOF
     @title = e.text('title')
     @author = e.text('author_name')
     @html_embed = e.text('html').unescape
-    
+    puts '@html_embed: ' + @html_embed.inspect if @debug
+        
   end
   
   def join_sentences(a)
@@ -152,13 +157,13 @@ EOF
 
     # the following cleans up sentences that start with And, Or, But, So etc.
 
-    a.each do |time, raws|
+    (0..a.length - 1).each do |n|
+      
+      time, s = a[n]
 
-      puts 'raws: ' + raws.inspect if @debug
+      puts 's: ' + s.inspect if @debug      
       
-      s = raws.sub(/^\W+/,'')
-      
-      if s[/^[a-z|0-9]|I\b|I'/]then
+      if s[/^[a-z|0-9]|I\b|I'/] then
         
         if a2.any? then
           
@@ -185,8 +190,15 @@ EOF
         a2[-1][-1] = a2[-1][-1].chomp + ' ' + s
       elsif s[/^So,? /]
         a2[-1][-1] += ' ' + s.sub(/^So,? /,'').capitalize
-      elsif s[/^\[Music|Applause\]/i]
+      elsif s[/^\[(?:Music|Applause)\]/i]
+        
         # ignore it
+        puts 'ignoring action commentary' if @debug
+        a2 << [time, '.']
+        
+        # To promote the next sentence to a new timestamp we 
+        # capitalize the 1st letter
+        a[n+1][-1] = a[n+1][-1].capitalize if a[n+1]
       else
         
         if a2.any? and not a2[-1][-1] =~ /\.\s*$/ then
@@ -198,6 +210,9 @@ EOF
       end
 
     end
+    
+    # Remove those modified entries which were labelled [Music] etc
+    a2.reject! {|time, s| s.length < 2}
 
     # formats the paragraph with the timestamp appearing above
     @a = a2

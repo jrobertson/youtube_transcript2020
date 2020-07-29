@@ -1,6 +1,6 @@
 Gem::Specification.new do |s|
   s.name = 'youtube_transcript2020'
-  s.version = '0.3.0'
+  s.version = '0.3.1'
   s.summary = 'Makes it easier to digest a Youtube video by ' + 
       'reading the transcript.'
   s.authors = ['James Robertson']
