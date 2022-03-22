@@ -3,10 +3,12 @@
 # file: youtube_transcript2020.rb
 
 require 'yawc'
+require 'json'
 require 'subunit'
 require 'youtube_id'
 require 'simple-config'
 
+# https://github.com/jdepoix/youtube-transcript-api
 
 class YoutubeTranscript2020
 
@@ -54,14 +56,26 @@ class YoutubeTranscript2020
     s = RXFReader.read(obj).first
 
     if s =~ /------+/ then
+
       header, body = s.split(/-----+/,2)
 
       h = SimpleConfig.new(header).to_h
       @id, @author, @title = h[:id], h[:author], h[:title]
       @s = body
+
+    elsif File.extname(obj) == '.json'
+
+      r = JSON.parse(s)
+      @a = r.map {|x| [x['start'], x['text']]}
+      @s = join_sentences(@a)
+
+      return
+
     else
+
       body = obj
       raw_transcript = true
+
     end
 
     puts 'body: ' + body[0..400] if @debug
@@ -193,7 +207,14 @@ EOF
       elsif s[/^"/]
         a2[-1][-1] = a2[-1][-1].chomp + ' ' + s
       elsif s[/^So,? /]
-        a2[-1][-1] += ' ' + s.sub(/^So,? /,'').capitalize
+
+        puts 'so? a2[-1]' + a2[-1].inspect if @debug
+
+        if a2.empty? then
+          a2 << [time, s.sub(/^So,? /,'').capitalize]
+        else
+          a2[-1][-1] += ' ' + s.sub(/^So,? /,'').capitalize
+        end
       elsif s[/^\[(?:Music|Applause)\]/i]
 
         # ignore it
@@ -220,7 +241,17 @@ EOF
 
     # formats the paragraph with the timestamp appearing above
     @a = a2
-    a2.map {|time, s| "\n%s\n\n%s" % [time, s]}.join("\n")
+
+    a2.map do |rawtime, s|
+
+      time = if rawtime.is_a? Float then
+        Subunit.seconds(rawtime).strfunit("%sc")
+      else
+        time
+      end
+
+      "\n%s\n\n%s" % [time, s]
+    end.join("\n")
 
   end
 
